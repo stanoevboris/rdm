@@ -6,6 +6,9 @@ from collections import defaultdict
 from math import log
 import string, itertools
 import multiprocessing
+from sklearn.preprocessing import MultiLabelBinarizer
+from category_encoders import woe
+import pandas as pd
 
 import Orange
 
@@ -179,29 +182,38 @@ class Wordification(object):
 
             :param measure: example weights approach (can be one of ``tfidf, binary, tf``).
         """
-        # from math import log
 
-        # TODO replace with scipy matrices (and calculate with scikit)
+        if measure == 'woe':
+            encoded_matrix, word_corpus = self.one_hot_encode_word_lists(self.resulting_documents)
+            X = pd.DataFrame(encoded_matrix, columns=word_corpus)
+            woe_encoder = woe.WOEEncoder(cols=word_corpus)
+            woe_encoded_train = woe_encoder.fit_transform(X=X, y=self.target_table.Y)
+            self.tf_idfs = woe_encoded_train.to_dict(orient='index')
+        else:
+            if measure == 'tfidf':
+                self.calculate_idf()
+            for doc_idx, document in enumerate(self.resulting_documents):
+                train_word_count = defaultdict(int)
+                self.tf_idfs[doc_idx] = {}
+                for word in document:
+                    train_word_count[word] += 1
 
-        if measure == 'tfidf':
-            self.calculate_idf()
+                for word in document:
+                    if measure == "binary":
+                        tf = 1
+                        idf = 1
+                    else:
+                        tf = train_word_count[word]
+                        idf = 1 if measure == "tf" else (self.idf[word] if word in self.idf else None)
 
-        for doc_idx, document in enumerate(self.resulting_documents):
-            train_word_count = defaultdict(int)
-            self.tf_idfs[doc_idx] = {}
-            for word in document:
-                train_word_count[word] += 1
+                    if idf is not None:
+                        self.tf_idfs[doc_idx][word] = tf * idf
 
-            for word in document:
-                if measure == "binary":
-                    tf = 1
-                    idf = 1
-                else:
-                    tf = train_word_count[word]
-                    idf = 1 if measure == "tf" else (self.idf[word] if word in self.idf else None)
-
-                if idf is not None:
-                    self.tf_idfs[doc_idx][word] = tf * idf
+    def one_hot_encode_word_lists(self, word_lists):
+        mlb = MultiLabelBinarizer()
+        encoded = mlb.fit_transform(word_lists)
+        labels = mlb.classes_
+        return encoded, labels
 
     def calculate_idf(self):
         if self.idf:
