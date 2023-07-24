@@ -7,10 +7,12 @@ from math import log
 import string, itertools
 import multiprocessing
 from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.feature_extraction.text import CountVectorizer
 from category_encoders import woe
 import pandas as pd
 
 import Orange
+
 
 def chunks(l, n):
     """ Yield n successive chunks from l.
@@ -79,15 +81,16 @@ def wordify_example(name_to_table, connecting_tables, context, cached_sentences,
                 print("search this table:", not prim_fkey or not (data_name,
                                                                   sec_fkey) in searched_connections)  # and sec_t!=self.target_table
             if not (sec_t_name, sec_fkey) in searched_connections and sec_t_name != target_table_name and (
-                        not prim_fkey or not (data_name, sec_fkey) in searched_connections):
+                    not prim_fkey or not (data_name, sec_fkey) in searched_connections):
                 example_indexes = index_by_value[sec_t_name][str(sec_fkey)][str(ex_pkey_value)] if not prim_fkey else \
                     index_by_value[sec_t_name][str(prim_fkey)][str(ex[str(sec_fkey)])]
 
                 for sec_ex_idx in example_indexes:
                     words += wordify_example(name_to_table, connecting_tables, context, cached_sentences,
                                              index_by_value, target_table_name, word_att_length, sec_t_name,
-                                             sec_t[sec_ex_idx], searched_connections | set(
-                            [(sec_t_name, sec_fkey), prim_fkey and (data_name, prim_fkey)]))
+                                             sec_t[sec_ex_idx], searched_connections | {(sec_t_name, sec_fkey),
+                                                                                        prim_fkey and (
+                                                                                            data_name, prim_fkey)})
 
         cached_sentences[data_name][str(ex_pkey_value)] = words
 
@@ -126,6 +129,9 @@ class Wordification(object):
         self.word_in_how_many_documents = defaultdict(int)
         self.tf_idfs = defaultdict(dict)
         self.name_to_table = {}
+
+        # needed for woe
+        self.words = {}
 
         # Finds table connections
         for primary_table in [target_table] + other_tables:
@@ -184,7 +190,12 @@ class Wordification(object):
         """
 
         if measure == 'woe':
-            encoded_matrix, word_corpus = self.one_hot_encode_word_lists(self.resulting_documents)
+            docs = []
+            for doc in self.resulting_documents:
+                docs.append(" ".join(doc))
+
+            encoded_matrix, word_corpus = self.one_hot_encode_word_lists(docs)
+            self.words = word_corpus
             X = pd.DataFrame(encoded_matrix, columns=word_corpus)
             woe_encoder = woe.WOEEncoder(cols=word_corpus)
             woe_encoded_train = woe_encoder.fit_transform(X=X, y=self.target_table.Y)
@@ -210,10 +221,13 @@ class Wordification(object):
                         self.tf_idfs[doc_idx][word] = tf * idf
 
     def one_hot_encode_word_lists(self, word_lists):
-        mlb = MultiLabelBinarizer()
-        encoded = mlb.fit_transform(word_lists)
-        labels = mlb.classes_
-        return encoded, labels
+        encoder = CountVectorizer(lowercase=False,
+                                  binary=True,
+                                  token_pattern='[a-zA-Z0-9$&+,:;=?@#|<>.^*()%!-_]+',
+                                  ngram_range=(1, 2))
+        encoded = encoder.fit_transform(word_lists)
+        labels = sorted(encoder.vocabulary_.keys())
+        return encoded.toarray(), labels
 
     def calculate_idf(self):
         if self.idf:
@@ -282,11 +296,14 @@ class Wordification(object):
         targetvals = set([a.value for a in self.resulting_classes])
         targetvar = Orange.data.DiscreteVariable(name=self.context.target_att, values=targetvals)
 
-        words = set()
-        for document in self.resulting_documents:
-            for word in document:
-                words.add(word)
-        words = sorted(words)
+        if self.words:
+            words = self.words  # already sorted
+        else:
+            words = set()
+            for document in self.resulting_documents:
+                for word in document:
+                    words.add(word)
+            words = sorted(words)
         variables = [Orange.data.ContinuousVariable(name=word) for word in words]
         domain = Orange.data.Domain(variables, class_vars=targetvar)
 
@@ -329,7 +346,7 @@ class Wordification(object):
         """
         string_documents = []
         for klass, document in zip(self.resulting_classes, self.resulting_documents):
-            string_documents.append("!" + str(klass) + " " + '' .join(document))
+            string_documents.append("!" + str(klass) + " " + ''.join(document))
         return '\n'.join(string_documents)
 
     def att_to_s(self, att):
