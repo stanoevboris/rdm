@@ -4,9 +4,8 @@
 
 from collections import defaultdict
 from math import log
-import string, itertools
+import itertools
 import multiprocessing
-from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.feature_extraction.text import CountVectorizer
 from category_encoders import woe
 import pandas as pd
@@ -107,6 +106,16 @@ def att_to_s(att):
     return str(att).title().replace(' ', '').replace('_', '')
 
 
+def one_hot_encode_word_lists(word_lists):
+    encoder = CountVectorizer(lowercase=False,
+                              binary=True,
+                              token_pattern='[a-zA-Z0-9$&+,:;=?@#|<>.^*()%!-_]+',
+                              ngram_range=(1, 1))
+    encoded = encoder.fit_transform(word_lists)
+    labels = sorted(encoder.vocabulary_.keys())
+    return encoded.toarray(), labels
+
+
 class Wordification(object):
     def __init__(self, target_table, other_tables, context, word_att_length=1, idf=None):
         """
@@ -194,7 +203,7 @@ class Wordification(object):
             for doc in self.resulting_documents:
                 docs.append(" ".join(doc))
 
-            encoded_matrix, word_corpus = self.one_hot_encode_word_lists(docs)
+            encoded_matrix, word_corpus = one_hot_encode_word_lists(docs)
             self.words = word_corpus
             X = pd.DataFrame(encoded_matrix, columns=word_corpus)
             woe_encoder = woe.WOEEncoder(cols=word_corpus)
@@ -220,20 +229,11 @@ class Wordification(object):
                     if idf is not None:
                         self.tf_idfs[doc_idx][word] = tf * idf
 
-    def one_hot_encode_word_lists(self, word_lists):
-        encoder = CountVectorizer(lowercase=False,
-                                  binary=True,
-                                  token_pattern='[a-zA-Z0-9$&+,:;=?@#|<>.^*()%!-_]+',
-                                  ngram_range=(1, 2))
-        encoded = encoder.fit_transform(word_lists)
-        labels = sorted(encoder.vocabulary_.keys())
-        return encoded.toarray(), labels
-
     def calculate_idf(self):
         if self.idf:
             return self.idf
         elif len(self.word_in_how_many_documents) != 0:
-            raise Exception('Words in document occurence already calculated!')
+            raise Exception('Words in document occurrence already calculated!')
         else:
             for document in self.resulting_documents:
                 for word in set(document):
@@ -249,11 +249,11 @@ class Wordification(object):
             raise ValueError('Weights are not available. Call calculate_weights() first.')
 
     def to_arff(self):
-        '''
+        """
         Returns the "wordified" representation in ARFF.
 
             :rtype: str
-        '''
+        """
         self.__check_weights()
 
         arff_string = "@RELATION " + self.target_table.name + "\n\n"
@@ -286,11 +286,11 @@ class Wordification(object):
         return arff_string
 
     def to_orange(self):
-        '''
+        """
         Returns an Orange Table instance populated with the data.
 
             :rtype: Orange.data.Table
-        '''
+        """
         self.__check_weights()
 
         targetvals = set([a.value for a in self.resulting_classes])
